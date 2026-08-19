@@ -170,7 +170,18 @@
     opacity: 1;
     pointer-events: auto;
   }
-  #litchensHolder canvas { display: block; }
+  #litchensHolder canvas {
+    display: block;
+    /* p5 renders at pixelDensity(1), so on a HiDPI screen the browser has
+       to stretch this canvas up to fill its CSS size — by default that
+       uses smooth interpolation, which blurs the crisp cell edges and
+       dulls the fill/outline colors (blending them with neighboring
+       pixels). Forcing nearest-neighbor scaling keeps it crisp/saturated
+       regardless of display pixel density. */
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
 
   /* Event-info block — static crisp text, not run through the litchens
      pixel/CA grid. Shows/hides together with litchens mode, same as the

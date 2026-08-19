@@ -231,7 +231,7 @@
     border-radius: 10px;
     backdrop-filter: blur(6px);
     color: rgba(255,255,255,0.85);
-    font: 12px/1.4 system-ui, sans-serif;
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     z-index: 10;
   }
   #litchensControls label {
@@ -242,6 +242,7 @@
   }
   #litchensControls input[type="range"] {
     flex: 1;
+    accent-color: #ff5cad;
   }
   /* Live numeric readout next to each slider, so values are easy to call
      out precisely (e.g. "Cell 5", "Edge Growth 40") when giving feedback. */
@@ -305,7 +306,7 @@
       <!-- event-info block: final vector text artwork (finaltext.svg),
            embedded 1:1 against the 1080x1350 reference frame — no more
            badge-fill rectangles behind it, that was placeholder-only.
-           Each path's fill is driven by --ei-fg (Badge Text color picker),
+           Each path's fill is driven by --ei-fg (Poster info color picker),
            default #000. -->
       <div id="eventInfo">
         <svg class="ei-text-svg" viewBox="0 0 1080 1350" xmlns="http://www.w3.org/2000/svg">
@@ -331,7 +332,7 @@
   <div id="litchensControls">
     <div class="row">
       <button id="playPause">Pause</button>
-      <button id="reset">Reseed Full</button>
+      <button id="reset">Regenerate</button>
     </div>
     <div class="sep"></div>
     <label>Cell <input id="cellSize" type="range" min="1" max="16" value="6"> <span id="cellSizeVal" class="slider-val">6</span></label>
@@ -350,7 +351,7 @@
     </div>
     <div class="sep"></div>
     <div class="row">
-      <label>Badge Text <input id="eiFgColorPicker" type="color"></label>
+      <label>Poster info <input id="eiFgColorPicker" type="color"></label>
       <input id="eiFgColorHex" type="text" maxlength="7" placeholder="#000000">
     </div>
     <div class="row">
@@ -414,7 +415,7 @@
   // is toggled, so each metal gets its own matching color scheme.
   const TEXTURE_PALETTES = [
     { outline: '#f46d25', fill: '#cab64e', text: '#ababab', badge: '#ababab' }, // tex-0 · streaked (metal_136)
-    { outline: '#687fc4', fill: '#ca5844', text: '#828282', badge: '#525252' }, // tex-1 · brushed (metal_230)
+    { outline: '#687fc4', fill: '#adca44', text: '#828282', badge: '#525252' }, // tex-1 · brushed (metal_230)
     { outline: '#dc556e', fill: '#ae945b', text: '#c2c1c1', badge: '#f0efef' }, // tex-2 · hazy (metal_242)
   ];
   function applyTexturePalette(m) {

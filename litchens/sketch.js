@@ -379,7 +379,7 @@ function renderToBuffer() {
   // up a much bigger fraction of a cell when the plate renders smaller
   // (e.g. a narrower browser window), making the outline look like it's
   // swallowing the whole pixel instead of just tracing its edge.
-  const strokeW = 2 * (screenCellSize / cellSize);
+  const strokeW = 3 * (screenCellSize / cellSize);
   renderBuffer.stroke(outlineColor[0], outlineColor[1], outlineColor[2]);
   renderBuffer.strokeWeight(strokeW);
   renderBuffer.strokeCap(ROUND);

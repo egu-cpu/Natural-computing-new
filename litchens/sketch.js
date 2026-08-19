@@ -72,8 +72,13 @@ function setup() {
   cnv.parent(litchensCanvasHolder);
   pixelDensity(1);
   noStroke();
+  // Canvas 2D smooths images by default — without this, blitting renderBuffer
+  // onto the main canvas each frame softens/blurs the crisp cell edges
+  // (visible as fuzzy pixels instead of the sharp CA grid).
+  drawingContext.imageSmoothingEnabled = false;
   renderBuffer = createGraphics(width, height);
   renderBuffer.pixelDensity(1);
+  renderBuffer.drawingContext.imageSmoothingEnabled = false;
   buildGridDimensions();
   buildTextMask(currentText); // draw once immediately with the fallback font
   classifyZones();
@@ -98,6 +103,9 @@ function windowResized() {
   if (!litchensCanvasHolder) return;
   resizeCanvas(litchensCanvasHolder.clientWidth, litchensCanvasHolder.clientHeight);
   renderBuffer.resizeCanvas(width, height);
+  // resizing a canvas resets its 2D context state, including smoothing
+  drawingContext.imageSmoothingEnabled = false;
+  renderBuffer.drawingContext.imageSmoothingEnabled = false;
   buildGridDimensions();
   buildTextMask(currentText);
   classifyZones();

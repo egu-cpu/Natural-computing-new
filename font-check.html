@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Font check</title>
+<style>
+  body { background: #111; color: #eee; font: 16px system-ui, sans-serif; padding: 24px; }
+  h1 { font-size: 18px; margin-bottom: 12px; }
+  .row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid #333; }
+  .yes { color: #06CE74; font-weight: bold; }
+  .no { color: #888; }
+  .sample { font-size: 34px; margin-left: 12px; }
+  code { background: #222; padding: 2px 6px; border-radius: 3px; }
+</style>
+</head>
+<body>
+  <h1>Checking which font names your browser resolves to an actually-installed font:</h1>
+  <div id="results"></div>
+
+<script>
+  // common ways a "Marist" install might register its family name
+  const candidates = [
+    'Marist',
+    'ABC Marist',
+    'ABC Marist Unlicensed Trial',
+    'ABC Marist Regular',
+    'ABC Marist Var',
+    'ABCMarist',
+    'Marist Regular'
+  ];
+
+  const results = document.getElementById('results');
+
+  async function check() {
+    // give any installed fonts a moment to register with the Font Loading API
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+
+    for (const name of candidates) {
+      const available = document.fonts.check(`32px "${name}"`);
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `
+        <span class="${available ? 'yes' : 'no'}">${available ? '✓ FOUND' : '✗ not found'}</span>
+        <code>"${name}"</code>
+        <span class="sample" style="font-family: '${name}';">Natural Computing</span>
+      `;
+      results.appendChild(row);
+    }
+
+    const note = document.createElement('p');
+    note.style.marginTop = '20px';
+    note.style.color = '#999';
+    note.innerHTML = 'If none say FOUND, but the "sample" text on one row still visually looks different from the others (i.e. actually Marist, not a fallback serif), that row\'s name is the one to use — the Font Loading API check can be unreliable for some locally-installed fonts even when the browser can render them.';
+    results.appendChild(note);
+  }
+  check();
+</script>
+</body>
+</html>

@@ -11,7 +11,19 @@
 const DIATYPE_REGULAR = '"ABC Diatype Regular"';
 const FONT_STACK = DIATYPE_REGULAR + ', Helvetica, Arial, sans-serif';
 
-let cellSize = 2;
+// The plate's aspect ratio is locked to 1080x1350 (see .plane in
+// tilt-plane.html), but the canvas itself renders at whatever actual
+// on-screen pixel size the plate happens to be (viewport width, zoom,
+// device pixel ratio, etc). cellSize is a "design-space" pixel count
+// (relative to this 1080-wide reference) so the CA grid has the same
+// density relative to the letterforms no matter how large the plate
+// renders — otherwise the same "Cell 2" setting would produce a visibly
+// finer or chunkier grid on a bigger screen/window than a smaller one.
+const DESIGN_GRID_WIDTH = 1080;
+const DESIGN_GRID_HEIGHT = 1350;
+let screenCellSize; // cellSize converted to actual on-screen pixels, kept in sync by buildGridDimensions()
+
+let cellSize = 6;
 let cols, rows;
 let grid, age, mask, core, boundary, halo;
 let running = true;
@@ -31,6 +43,17 @@ let litchensCanvasHolder = null;
 let fillColor = [0, 0, 0]; // #000000, editable via the color/hex controls
 let outlineColor = [233, 114, 189]; // #E972BD
 
+// Perf: the fill+outline pass loops every live cell and issues its own
+// rect()/line() draw calls — with a fine cellSize and high edge growth that
+// can be hundreds of thousands of calls. The simulation itself only
+// actually changes every `framesPerStep` frames, so re-running that full
+// draw loop on every single animation frame (60fps) was mostly wasted work.
+// Instead we render into an offscreen buffer only when something actually
+// changed (a step happened, or the user touched a color/cell/text control),
+// and just blit that cached image to the canvas the rest of the time.
+let renderBuffer;
+let needsRedraw = true;
+
 function hexToRgb(hex) {
   const h = hex.replace('#', '');
   const r = parseInt(h.substring(0, 2), 16);
@@ -49,6 +72,8 @@ function setup() {
   cnv.parent(litchensCanvasHolder);
   pixelDensity(1);
   noStroke();
+  renderBuffer = createGraphics(width, height);
+  renderBuffer.pixelDensity(1);
   buildGridDimensions();
   buildTextMask(currentText); // draw once immediately with the fallback font
   classifyZones();
@@ -64,6 +89,7 @@ function setup() {
       buildTextMask(currentText);
       classifyZones();
       seedFromMask(1.0);
+      needsRedraw = true;
     }).catch(() => { /* font failed to load; keep the fallback */ });
   }
 }
@@ -71,10 +97,12 @@ function setup() {
 function windowResized() {
   if (!litchensCanvasHolder) return;
   resizeCanvas(litchensCanvasHolder.clientWidth, litchensCanvasHolder.clientHeight);
+  renderBuffer.resizeCanvas(width, height);
   buildGridDimensions();
   buildTextMask(currentText);
   classifyZones();
   seedFromMask(1.0);
+  needsRedraw = true;
 }
 
 // called by tilt-plane.html when the plate is resized/re-tilted layout changes
@@ -100,11 +128,16 @@ function setLitchensColors(fillHex, outlineHex) {
   if (fillHexInput) fillHexInput.value = fillHex;
   if (outlinePicker) outlinePicker.value = outlineHex;
   if (outlineHexInput) outlineHexInput.value = outlineHex;
+  needsRedraw = true;
 }
 
 function buildGridDimensions() {
-  cols = Math.max(1, Math.floor(width / cellSize));
-  rows = Math.max(1, Math.floor(height / cellSize));
+  // cols/rows come from the design-space reference (1080x1350), not the
+  // actual canvas pixel size, so the grid density stays constant across
+  // screen sizes — see the comment on DESIGN_GRID_WIDTH above.
+  cols = Math.max(1, Math.floor(DESIGN_GRID_WIDTH / cellSize));
+  rows = Math.max(1, Math.floor(DESIGN_GRID_HEIGHT / cellSize));
+  screenCellSize = cellSize * (width / DESIGN_GRID_WIDTH);
   grid = make2D(cols, rows, 0);
   age = make2D(cols, rows, 0);
 }
@@ -140,10 +173,9 @@ function buildTextMask(txt) {
   // between lines. The litchens canvas renders at whatever on-screen pixel
   // size the plate actually is, so scale everything by how the canvas's
   // width compares to that 1080px reference instead of using fixed pixels.
-  const DESIGN_WIDTH = 1080;
   const DESIGN_LINE_GAP = 40;
   const DESIGN_MARGIN_TOP = 2; // was -4, nudged down 6px
-  const scale = width / DESIGN_WIDTH;
+  const scale = width / DESIGN_GRID_WIDTH;
 
   // draws the lines at the given size, anchored flush-left with the top
   // margin, matching the Figma frame.
@@ -176,8 +208,8 @@ function buildTextMask(txt) {
 
   for (let i = 0; i < cols; i++) {
     for (let j = 0; j < rows; j++) {
-      const px = Math.floor((i + 0.5) * cellSize);
-      const py = Math.floor((j + 0.5) * cellSize);
+      const px = Math.floor((i + 0.5) * screenCellSize);
+      const py = Math.floor((j + 0.5) * screenCellSize);
       if (px < width && py < height) {
         const idx = 4 * (py * width + px);
         mask[i][j] = pg.pixels[idx] > 120 ? 1 : 0;
@@ -302,6 +334,54 @@ function step() {
   generation++;
 }
 
+// Does the actual per-cell fill+outline rendering into the offscreen
+// renderBuffer. Only called when needsRedraw is true (see draw()) — this is
+// the expensive part (up to ~2 draw calls per live cell), so it should run
+// only when the picture has actually changed, not on every animation frame.
+function renderToBuffer() {
+  renderBuffer.clear();
+  const isLive = (i, j) => i >= 0 && i < cols && j >= 0 && j < rows && grid[i][j] === 1;
+
+  // pass 1: fill. Only round a cell's corner where it's a true exterior
+  // corner of the overall shape (both its edge-neighbors at that corner are
+  // dead) — corners touching a live neighbor stay square, so adjacent cells
+  // still butt flush with no gap.
+  renderBuffer.noStroke();
+  renderBuffer.fill(fillColor[0], fillColor[1], fillColor[2]);
+  const cornerRadius = screenCellSize * 0.35;
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      if (!isLive(i, j)) continue;
+      const x = i * screenCellSize, y = j * screenCellSize;
+      const left = isLive(i - 1, j), right = isLive(i + 1, j);
+      const up = isLive(i, j - 1), down = isLive(i, j + 1);
+      const tl = (!left && !up) ? cornerRadius : 0;
+      const tr = (!right && !up) ? cornerRadius : 0;
+      const br = (!right && !down) ? cornerRadius : 0;
+      const bl = (!left && !down) ? cornerRadius : 0;
+      renderBuffer.rect(x, y, screenCellSize, screenCellSize, tl, tr, br, bl);
+    }
+  }
+
+  // pass 2, on top: a thin outline traced along the perimeter of the live
+  // cellular-automaton pattern (only where a live cell borders a dead one),
+  // so the shape reads as outlined without a heavy background band.
+  renderBuffer.stroke(outlineColor[0], outlineColor[1], outlineColor[2]);
+  renderBuffer.strokeWeight(2);
+  renderBuffer.strokeCap(ROUND);
+  renderBuffer.strokeJoin(ROUND);
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      if (!isLive(i, j)) continue;
+      const x = i * screenCellSize, y = j * screenCellSize;
+      if (!isLive(i, j - 1)) renderBuffer.line(x, y, x + screenCellSize, y);                             // top
+      if (!isLive(i, j + 1)) renderBuffer.line(x, y + screenCellSize, x + screenCellSize, y + screenCellSize); // bottom
+      if (!isLive(i - 1, j)) renderBuffer.line(x, y, x, y + screenCellSize);                             // left
+      if (!isLive(i + 1, j)) renderBuffer.line(x + screenCellSize, y, x + screenCellSize, y + screenCellSize); // right
+    }
+  }
+}
+
 function draw() {
   clear(); // transparent so the metal texture shows through underneath
 
@@ -309,64 +389,33 @@ function draw() {
 
   if (running && frameCount % framesPerStep === 0) {
     step();
+    needsRedraw = true;
   }
 
-  const isLive = (i, j) => i >= 0 && i < cols && j >= 0 && j < rows && grid[i][j] === 1;
-
-  // pass 1: fill. Only round a cell's corner where it's a true exterior
-  // corner of the overall shape (both its edge-neighbors at that corner are
-  // dead) — corners touching a live neighbor stay square, so adjacent cells
-  // still butt flush with no gap.
-  noStroke();
-  fill(fillColor[0], fillColor[1], fillColor[2]);
-  const cornerRadius = cellSize * 0.35;
-  for (let i = 0; i < cols; i++) {
-    for (let j = 0; j < rows; j++) {
-      if (!isLive(i, j)) continue;
-      const x = i * cellSize, y = j * cellSize;
-      const left = isLive(i - 1, j), right = isLive(i + 1, j);
-      const up = isLive(i, j - 1), down = isLive(i, j + 1);
-      const tl = (!left && !up) ? cornerRadius : 0;
-      const tr = (!right && !up) ? cornerRadius : 0;
-      const br = (!right && !down) ? cornerRadius : 0;
-      const bl = (!left && !down) ? cornerRadius : 0;
-      rect(x, y, cellSize, cellSize, tl, tr, br, bl);
-    }
+  if (needsRedraw) {
+    renderToBuffer();
+    needsRedraw = false;
+    const genEl = document.getElementById('genCount');
+    const liveEl = document.getElementById('liveCount');
+    if (genEl) genEl.innerText = generation;
+    if (liveEl) liveEl.innerText = liveCount;
   }
 
-  // pass 2, on top: a thin outline traced along the perimeter of the live
-  // cellular-automaton pattern (only where a live cell borders a dead one),
-  // so the shape reads as outlined without a heavy background band.
-  stroke(outlineColor[0], outlineColor[1], outlineColor[2]);
-  strokeWeight(2);
-  strokeCap(ROUND);
-  strokeJoin(ROUND);
-  for (let i = 0; i < cols; i++) {
-    for (let j = 0; j < rows; j++) {
-      if (!isLive(i, j)) continue;
-      const x = i * cellSize, y = j * cellSize;
-      if (!isLive(i, j - 1)) line(x, y, x + cellSize, y);                       // top
-      if (!isLive(i, j + 1)) line(x, y + cellSize, x + cellSize, y + cellSize); // bottom
-      if (!isLive(i - 1, j)) line(x, y, x, y + cellSize);                       // left
-      if (!isLive(i + 1, j)) line(x + cellSize, y, x + cellSize, y + cellSize); // right
-    }
-  }
-
-  const genEl = document.getElementById('genCount');
-  const liveEl = document.getElementById('liveCount');
-  if (genEl) genEl.innerText = generation;
-  if (liveEl) liveEl.innerText = liveCount;
+  // cheap every-frame blit of the cached render, instead of redoing the
+  // full per-cell draw-call loop 60 times a second
+  image(renderBuffer, 0, 0);
 }
 
 function mouseDragged() { if (litchensActive) toggleAtMouse(); }
 function mousePressed() { if (litchensActive) toggleAtMouse(); }
 function toggleAtMouse() {
   if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) return;
-  const i = Math.floor(mouseX / cellSize);
-  const j = Math.floor(mouseY / cellSize);
+  const i = Math.floor(mouseX / screenCellSize);
+  const j = Math.floor(mouseY / screenCellSize);
   if (i >= 0 && i < cols && j >= 0 && j < rows) {
     grid[i][j] = 1;
     age[i][j] = 0;
+    needsRedraw = true;
   }
 }
 
@@ -380,6 +429,7 @@ function wireControls() {
     age = make2D(cols, rows, 0);
     seedFromMask(1.0);
     generation = 0;
+    needsRedraw = true;
   });
   document.getElementById('cellSize').addEventListener('input', (e) => {
     cellSize = parseInt(e.target.value);
@@ -389,6 +439,7 @@ function wireControls() {
     classifyZones();
     seedFromMask(1.0);
     generation = 0;
+    needsRedraw = true;
   });
   document.getElementById('speed').addEventListener('input', (e) => {
     const v = parseInt(e.target.value);
@@ -422,6 +473,7 @@ function wireControls() {
   fillPicker.addEventListener('input', (e) => {
     fillColor = hexToRgb(e.target.value);
     fillHex.value = e.target.value;
+    needsRedraw = true;
   });
   fillHex.addEventListener('change', (e) => {
     let v = e.target.value.trim();
@@ -430,6 +482,7 @@ function wireControls() {
       fillColor = hexToRgb(v);
       fillPicker.value = v;
       fillHex.value = v;
+      needsRedraw = true;
     } else {
       fillHex.value = rgbToHex(fillColor); // revert on bad input
     }
@@ -438,6 +491,7 @@ function wireControls() {
   outlinePicker.addEventListener('input', (e) => {
     outlineColor = hexToRgb(e.target.value);
     outlineHex.value = e.target.value;
+    needsRedraw = true;
   });
   outlineHex.addEventListener('change', (e) => {
     let v = e.target.value.trim();
@@ -446,6 +500,7 @@ function wireControls() {
       outlineColor = hexToRgb(v);
       outlinePicker.value = v;
       outlineHex.value = v;
+      needsRedraw = true;
     } else {
       outlineHex.value = rgbToHex(outlineColor); // revert on bad input
     }

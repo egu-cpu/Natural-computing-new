@@ -374,8 +374,14 @@ function renderToBuffer() {
   // pass 2, on top: a thin outline traced along the perimeter of the live
   // cellular-automaton pattern (only where a live cell borders a dead one),
   // so the shape reads as outlined without a heavy background band.
+  // Stroke weight is design-space (2px at the 1080-wide reference), scaled
+  // by the same ratio as screenCellSize — otherwise a fixed 2px stroke eats
+  // up a much bigger fraction of a cell when the plate renders smaller
+  // (e.g. a narrower browser window), making the outline look like it's
+  // swallowing the whole pixel instead of just tracing its edge.
+  const strokeW = 2 * (screenCellSize / cellSize);
   renderBuffer.stroke(outlineColor[0], outlineColor[1], outlineColor[2]);
-  renderBuffer.strokeWeight(2);
+  renderBuffer.strokeWeight(strokeW);
   renderBuffer.strokeCap(ROUND);
   renderBuffer.strokeJoin(ROUND);
   for (let i = 0; i < cols; i++) {
